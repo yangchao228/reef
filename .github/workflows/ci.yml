@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: reef
+          POSTGRES_USER: reef
+          POSTGRES_PASSWORD: reef
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U reef -d reef"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    env:
+      DATABASE_URL: postgres://reef:reef@127.0.0.1:5432/reef
+      ADMIN_IP_ALLOWLIST: 127.0.0.1,::1
+      GITHUB_WEBHOOK_SECRET: ci-webhook-secret
+      NEXTAUTH_SECRET: ci-nextauth-secret
+      NEXTAUTH_URL: http://127.0.0.1:3000
+      NEXT_PUBLIC_SITE_URL: http://127.0.0.1:3000
+      SMOKE_BASE_URL: http://127.0.0.1:3000
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Initialize Database Schema
+        run: npm run db:init
+
+      - name: Seed Human30 Fixture
+        run: npm run import:markdown -- --module human30 --dir tests/fixtures/content/human30 --purge-missing
+
+      - name: Seed Openclaw Fixture
+        run: npm run import:markdown -- --module openclaw --dir tests/fixtures/content/openclaw --purge-missing
+
+      - name: Seed Bookmarks Fixture
+        run: npm run import:markdown -- --module bookmarks --dir tests/fixtures/content/bookmarks --purge-missing
+
+      - name: Build Frontend
+        run: npm run build
+
+      - name: Start Frontend
+        run: |
+          npm run start -- --hostname 127.0.0.1 --port 3000 > /tmp/reef-next.log 2>&1 &
+          echo $! > /tmp/reef-next.pid
+
+      - name: Wait For Frontend
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Frontend did not become ready in time."
+          cat /tmp/reef-next.log
+          exit 1
+
+      - name: Run Smoke Tests
+        run: npm run test:smoke
+
+      - name: Print Frontend Log On Failure
+        if: failure()
+        run: cat /tmp/reef-next.log
+
+      - name: Stop Frontend
+        if: always()
+        run: |
+          if [ -f /tmp/reef-next.pid ]; then
+            kill "$(cat /tmp/reef-next.pid)" || true
+          fi

@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+.light {
+  --bg: #f4f8f5;
+  --bg-card: #ffffff;
+  --bg-soft: #eef6f1;
+  --pri: #1d9e75;
+  --pri-d: #085041;
+  --pri-l: #5dcaa5;
+  --pri-xl: #9fe1cb;
+  --border: #c8e6da;
+  --t1: #0d1f18;
+  --t2: #3a5a48;
+  --t3: #7aaa90;
+  --t4: #b0d0c0;
+  --logo-color: #085041;
+  --pill-g-bg: #e1f5ee;
+  --pill-g-c: #085041;
+  --pill-n-bg: #f0f7f4;
+  --pill-n-c: #7aaa90;
+  --tag-bg: #eef6f1;
+  --tag-c: #1d9e75;
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #0d0d0d;
+  --bg-card: #141414;
+  --bg-soft: #1a1200;
+  --pri: #c9a84c;
+  --pri-d: #e8cc80;
+  --pri-l: #d4b45a;
+  --pri-xl: #8b5e00;
+  --border: #2a2010;
+  --t1: #f3dfa5;
+  --t2: #d8bb67;
+  --t3: #8b6b20;
+  --t4: #5c3d00;
+  --logo-color: #c9a84c;
+  --pill-g-bg: #1a1200;
+  --pill-g-c: #c9a84c;
+  --pill-n-bg: #111111;
+  --pill-n-c: #5c3d00;
+  --tag-bg: #1a1200;
+  --tag-c: #c9a84c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background:
+    radial-gradient(circle at top center, rgba(29, 158, 117, 0.1), transparent 38%),
+    linear-gradient(180deg, var(--bg-soft) 0%, var(--bg) 18%, var(--bg) 100%);
+  color: var(--t1);
+  font-family:
+    "Avenir Next",
+    "Segoe UI",
+    "Helvetica Neue",
+    sans-serif;
+}
+
+.dark body {
+  background:
+    radial-gradient(circle at top center, rgba(201, 168, 76, 0.12), transparent 42%),
+    linear-gradient(180deg, #130f08 0%, var(--bg) 22%, var(--bg) 100%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.font-display {
+  font-family:
+    "Iowan Old Style",
+    "Palatino Linotype",
+    "Book Antiqua",
+    Georgia,
+    serif;
+}
+
+::selection {
+  background: var(--pri);
+  color: var(--bg-card);
+}

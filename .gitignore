@@ -27,6 +27,13 @@ go.work.sum
 # env file
 .env
 
+# Node / Next.js
+node_modules/
+.next/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
 # Editor/IDE
 # .idea/
 # .vscode/

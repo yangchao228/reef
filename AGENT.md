@@ -12,6 +12,8 @@
 
 内容提交到 GitHub 仓库后，系统通过 Webhook 自动同步，解析 Markdown 文件，存入数据库，通过自定义域名对外展示。用户访问链路完全不经过 GitHub，国内访问稳定。
 
+**当前实施约束：** 第一期开发表现层与原型交互时，默认采用 `Next.js-only` 方案，不实现 Go 后端。所有服务端能力先以 Next.js API Routes、本地 PostgreSQL 开发库与可替换的数据访问层承接；Go 方案仅作为后续阶段预留，不是当前默认开发目标。
+
 ---
 
 ## 2. 技术栈
@@ -24,15 +26,16 @@
 | next-themes | latest | 明暗主题切换 |
 | next-mdx-remote | ^4 | MDX 渲染 |
 
-### 后端
+### 服务端（第一期）
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| Go | ^1.22 | API 服务、Webhook 处理、内容同步 |
-| Gin | latest | HTTP 框架 |
-| sqlc | latest | SQL 代码生成 |
-| pgx | ^5 | PostgreSQL 驱动 |
-| go-redis | ^9 | Redis 客户端 |
-| octokit（go-github） | latest | GitHub API |
+| Next.js Route Handlers | 14 (App Router) | 首版 API、原型交互、轻量数据访问层 |
+| NextAuth.js | latest | 后续接入 GitHub OAuth 时使用 |
+| Octokit | latest | 后续 GitHub API / Webhook 同步 |
+
+### 后续阶段预留
+- Go 后端、Gin、sqlc、pgx、go-redis 暂不作为第一期实现要求。
+- 若后续同步链路、后台能力和任务调度复杂度提高，再评估是否拆分独立 Go 服务。
 
 ### 外部服务
 | 服务 | 用途 |
@@ -44,8 +47,7 @@
 | GitHub Webhook | 内容变更通知 |
 
 ### 部署
-- 前端：Docker 镜像，Next.js standalone 构建
-- 后端：Docker 镜像，Go 静态二进制
+- 应用：Docker 镜像，Next.js standalone 构建
 - 编排：`docker-compose.yml`
 - 反向代理：Nginx（宿主机），SSL 由 Let's Encrypt 提供
 
@@ -78,45 +80,28 @@ reef/
 │   │   ├── content/           # ArticleCard, MDXRenderer
 │   │   └── ui/                # Button, Badge, ThemeToggle 等基础组件
 │   ├── lib/
-│   │   ├── api.ts             # 封装对 Go 后端的请求
+│   │   ├── api.ts             # 封装对 Next.js API Routes 的请求
+│   │   ├── db.ts              # PostgreSQL 连接
+│   │   ├── modules.ts         # 模块静态元数据
+│   │   ├── content-repository.ts # 内容与互动数据访问层
+│   │   ├── admin-auth.ts      # 临时管理员白名单
 │   │   └── types.ts           # 共享类型定义
 │   ├── Dockerfile
+│   ├── db/init/001_schema.sql # 本地开发库初始化 SQL
 │   └── next.config.js
-│
-├── backend/                   # Go 后端
-│   ├── cmd/
-│   │   └── server/
-│   │       └── main.go        # 入口
-│   ├── internal/
-│   │   ├── handler/           # HTTP 处理器（按资源分文件）
-│   │   │   ├── webhook.go
-│   │   │   ├── content.go
-│   │   │   ├── repos.go
-│   │   │   ├── comments.go
-│   │   │   └── categories.go
-│   │   ├── service/           # 业务逻辑
-│   │   │   ├── sync.go        # 内容同步引擎
-│   │   │   ├── parser.go      # Markdown / frontmatter 解析
-│   │   │   └── github.go      # GitHub API 封装
-│   │   ├── db/                # sqlc 生成代码 + 手写查询
-│   │   │   ├── query/         # .sql 文件
-│   │   │   └── sqlc/          # 生成的 Go 代码
-│   │   ├── cache/             # Redis 操作封装
-│   │   └── middleware/        # Auth、CORS、日志
-│   ├── migrations/            # 数据库迁移 SQL
-│   ├── Dockerfile
-│   └── go.mod
 │
 ├── docker-compose.yml         # 本地开发 + 生产编排
 ├── nginx.conf                 # Nginx 反向代理配置
 └── AGENT.MD                   # 本文件
 ```
 
+> 注：若仓库内暂时出现 `backend/` 目录，也视为预研或后续阶段占位，不构成第一期默认开发范围。
+
 ---
 
 ## 4. 数据库 Schema
 
-共 7 张表，迁移文件放在 `backend/migrations/`。
+第一期本地开发库初始化 SQL 放在 `frontend/db/init/001_schema.sql`。设计基线沿用 7 张核心表，另补充 `view_events` 作为阅读量去重辅助表。
 
 ```sql
 -- repo_registry：GitHub 仓库注册
@@ -212,7 +197,7 @@ CREATE TABLE comments (
 ## 5. API 接口规范
 
 ### Base URL
-- 本地开发：`http://localhost:8080`
+- 本地开发：`http://localhost:3000`
 - 生产：通过 Nginx 代理到 `/api/*`
 
 ### 接口列表
@@ -310,9 +295,9 @@ NEXTAUTH_URL=                 # https://your-domain.com
 ADMIN_GITHUB_ID=              # 你的 GitHub 数字 ID
 
 # ── 系统 ────────────────────────────────
-NEXT_PUBLIC_API_URL=          # Go 后端地址，前端请求用
+NEXT_PUBLIC_SITE_URL=         # 前端访问域名
 NEXT_PUBLIC_URL=              # 系统域名
-PORT=8080                     # Go 后端端口
+PORT=3000                     # Next.js 应用端口
 ```
 
 ---
@@ -336,12 +321,11 @@ feat(backend): 实现 Webhook 签名验证
 fix(frontend): 修复暗色模式下 Logo 颜色未切换
 ```
 
-### 8.3 Go 代码规范
-- 使用 `gofmt` 格式化，提交前必须通过 `golangci-lint`
-- 错误处理：不使用裸 `panic`，所有错误向上返回或记录日志
-- 日志：使用 `slog`（标准库），结构化日志
-- 配置：通过 `os.Getenv` 读取，启动时校验必填项
-- HTTP handler 只做参数解析和响应，业务逻辑放 service 层
+### 8.3 第一期服务端规范
+- 第一期默认不新增 Go 服务，不把当前需求拆到独立后端容器
+- 需要服务端逻辑时，优先使用 Next.js Route Handlers / Server Components / `lib/*` 数据访问层
+- 页面层不得直接耦合存储实现细节；数据读取优先经 `lib/` 封装，便于后续切换到托管数据库
+- 新增接口时先保持响应结构稳定：`{ data, error }`
 
 ### 8.4 TypeScript / Next.js 规范
 - 严格模式：`"strict": true`
@@ -361,17 +345,17 @@ fix(frontend): 修复暗色模式下 Logo 颜色未切换
 
 | 阶段 | 目标 | 交付物 |
 |------|------|--------|
-| Phase 0 | 环境搭建 | 数据库 schema、docker-compose、.env 配置完成 |
-| Phase 1 | Go 后端单向同步 | Webhook 接收、内容解析、DB 写入、cron 降级 |
-| Phase 2 | Next.js 前台展示 | 首页、三模块列表页、文章详情页、搜索 |
-| Phase 3 | 后台管理 | Repo 管理、同步日志、分类管理、评论审核 |
-| Phase 4 | 互动功能 | 游客评论（含审核）、点赞、阅读量统计 |
+| Phase 0 | Next.js 基线 | `frontend/`、主题系统、路由结构、Docker 与 `.env` 样板完成 |
+| Phase 1 | 前台展示与原型交互 | 首页、三模块列表页、文章详情页、搜索、分类/标签、互动原型 |
+| Phase 2 | 托管数据库切换 | 接入 Supabase 或正式 PostgreSQL，替换本地开发库配置 |
+| Phase 3 | 后台管理 | GitHub OAuth、评论审核、同步状态、基础配置页 |
+| Phase 4 | 正式同步链路 | GitHub Webhook、内容解析、增量同步、cron 补偿 |
 
-**Phase 0 验收：** `docker-compose up` 能启动前后端，Go 服务能连通 Supabase 和 Redis。
+**Phase 0 验收：** `cd frontend && npm run build` 通过，`docker-compose up` 能启动 Next.js 应用。
 
-**Phase 1 验收：** push 一个 `.md` 文件到 GitHub，30 秒内数据库出现对应记录。
+**Phase 1 验收：** 访问 `localhost:3000` 能看到首页，三个模块可访问，文章详情、分类、标签、搜索与互动原型可用。
 
-**Phase 2 验收：** 访问 `localhost:3000` 能看到首页，三个模块可以访问，文章详情可以渲染。
+**Phase 2 验收：** 应用不再依赖本地开发库地址，正式环境数据库可稳定读写。
 
 ---
 
@@ -390,24 +374,16 @@ fix(frontend): 修复暗色模式下 Logo 颜色未切换
 
 ```bash
 # 启动开发环境
-docker-compose up -d db redis
-cd backend && go run ./cmd/server
+cd frontend && npm install
 cd frontend && npm run dev
 
-# 执行数据库迁移
-cd backend && goose -dir migrations postgres $DATABASE_URL up
-
-# 生成 sqlc 代码
-cd backend && sqlc generate
-
 # 构建 Docker 镜像
-docker build -t reef-backend ./backend
 docker build -t reef-frontend ./frontend
 
 # 生产部署
-docker-compose -f docker-compose.prod.yml up -d
+docker-compose up -d
 ```
 
 ---
 
-*AGENT.MD · Reef v6.0 · 最后更新 2026-03-17*
+*AGENT.MD · Reef v6.0 · 最后更新 2026-03-19*
