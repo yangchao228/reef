@@ -1,13 +1,20 @@
 import Link from "next/link";
 
-export function Hero() {
+import { listModules } from "@/lib/content-repository";
+import { getRequestWorkspaceSlug, WORKSPACE_DIRECTORY_PATH } from "@/lib/workspace";
+
+export async function Hero() {
+  const workspaceSlug = getRequestWorkspaceSlug();
+  const primaryModule = (await listModules(workspaceSlug))[0];
+  const hasWorkspace = Boolean(workspaceSlug);
+
   return (
     <section className="relative overflow-hidden px-5 pb-11 pt-14 sm:px-8 sm:pt-16">
       <div className="absolute inset-x-8 top-0 -z-10 h-44 rounded-full bg-[radial-gradient(circle_at_center,_rgba(29,158,117,0.18),_transparent_65%)] dark:bg-[radial-gradient(circle_at_center,_rgba(201,168,76,0.16),_transparent_65%)]" />
       <div className="mx-auto max-w-3xl text-center">
         <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-border bg-[var(--pill-g-bg)] px-4 py-2 text-xs tracking-[0.18em] text-[var(--pill-g-c)]">
           <span className="h-2 w-2 rounded-full bg-pri" />
-          Human 3.0 · 个人数字系统
+          Workspace-native · 内容操作系统
         </div>
         <h1 className="mt-6 font-display text-5xl leading-[0.95] tracking-[-0.05em] text-t1 sm:text-6xl">
           GitHub 是硬盘
@@ -21,15 +28,23 @@ export function Hero() {
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link
             className="rounded-lg bg-pri-d px-6 py-3 text-sm text-white transition hover:opacity-90 dark:text-[#0D0D0D]"
-            href="/human30"
+            href={
+              hasWorkspace
+                ? primaryModule?.href ?? "/search"
+                : WORKSPACE_DIRECTORY_PATH
+            }
           >
-            进入专栏
+            {hasWorkspace
+              ? primaryModule
+                ? `进入 ${primaryModule.name}`
+                : "开始浏览"
+              : "选择 Workspace"}
           </Link>
           <Link
             className="rounded-lg border border-pri-l px-6 py-3 text-sm text-pri-d transition hover:bg-bg-card"
-            href="/search?q=system"
+            href={hasWorkspace ? "/search?q=system" : "/about"}
           >
-            浏览系统主题
+            {hasWorkspace ? "浏览系统主题" : "了解系统"}
           </Link>
         </div>
       </div>

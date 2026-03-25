@@ -3,13 +3,25 @@ import Link from "next/link";
 import { Hero } from "@/components/home/hero";
 import { ModuleGrid } from "@/components/home/module-grid";
 import { UpdateTimeline } from "@/components/home/update-timeline";
+import { WorkspaceDirectory } from "@/components/workspace/workspace-directory";
 import { listAllTags, listCategories } from "@/lib/content-repository";
+import { getRequestWorkspaceSlug } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const categories = (await listCategories()).slice(0, 4);
-  const tags = (await listAllTags()).slice(0, 8);
+  const workspaceSlug = getRequestWorkspaceSlug();
+  if (!workspaceSlug) {
+    return (
+      <>
+        <Hero />
+        <WorkspaceDirectory />
+      </>
+    );
+  }
+
+  const categories = (await listCategories(workspaceSlug)).slice(0, 4);
+  const tags = (await listAllTags(workspaceSlug)).slice(0, 8);
 
   return (
     <>

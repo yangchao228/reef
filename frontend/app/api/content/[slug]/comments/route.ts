@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createComment, getApprovedComments } from "@/lib/content-repository";
 import { decodeRouteParam } from "@/lib/route-param";
+import { resolveWorkspaceSlug } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +11,21 @@ export async function GET(
   { params }: { params: { slug: string } },
 ) {
   const slug = decodeRouteParam(params.slug);
+  const workspaceSlug = resolveWorkspaceSlug(_request.headers, _request.cookies);
+  if (!workspaceSlug) {
+    return NextResponse.json(
+      {
+        data: null,
+        error: {
+          code: "WORKSPACE_REQUIRED",
+          message: "当前请求缺少 x-reef-workspace，无法识别 workspace 上下文。",
+        },
+      },
+      { status: 400 },
+    );
+  }
   return NextResponse.json({
-    data: await getApprovedComments(slug),
+    data: await getApprovedComments(slug, workspaceSlug),
     error: null,
   });
 }
@@ -26,6 +40,19 @@ export async function POST(
     fingerprint?: string;
   };
   const slug = decodeRouteParam(params.slug);
+  const workspaceSlug = resolveWorkspaceSlug(request.headers, request.cookies);
+  if (!workspaceSlug) {
+    return NextResponse.json(
+      {
+        data: null,
+        error: {
+          code: "WORKSPACE_REQUIRED",
+          message: "当前请求缺少 x-reef-workspace，无法识别 workspace 上下文。",
+        },
+      },
+      { status: 400 },
+    );
+  }
 
   if (!body.nickname || !body.body || !body.fingerprint) {
     return NextResponse.json(
@@ -41,7 +68,13 @@ export async function POST(
   }
 
   try {
-    await createComment(slug, body.nickname, body.body, body.fingerprint);
+    await createComment(
+      slug,
+      body.nickname,
+      body.body,
+      body.fingerprint,
+      workspaceSlug,
+    );
   } catch (error) {
     if (error instanceof Error && error.message === "CONTENT_NOT_FOUND") {
       return NextResponse.json(

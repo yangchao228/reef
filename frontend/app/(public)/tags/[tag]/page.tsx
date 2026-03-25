@@ -1,14 +1,23 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { ContentCard } from "@/components/content/content-card";
 import { listItemsByTag } from "@/lib/content-repository";
 import { decodeRouteParam } from "@/lib/route-param";
+import {
+  buildWorkspaceDirectoryHref,
+  getRequestWorkspaceSlug,
+} from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
 export default async function TagDetailPage({ params }: { params: { tag: string } }) {
   const tag = decodeRouteParam(params.tag);
-  const items = await listItemsByTag(tag);
+  const workspaceSlug = getRequestWorkspaceSlug();
+  if (!workspaceSlug) {
+    redirect(buildWorkspaceDirectoryHref(`/tags/${encodeURIComponent(tag)}`));
+  }
+
+  const items = await listItemsByTag(tag, workspaceSlug);
   if (items.length === 0) {
     notFound();
   }

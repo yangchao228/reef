@@ -1,19 +1,31 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { ContentCard } from "@/components/content/content-card";
-import { getCategoryName, listItemsByCategory } from "@/lib/content-repository";
+import {
+  getCategoryName,
+  listItemsByCategoryInWorkspace,
+} from "@/lib/content-repository";
 import { decodeRouteParam } from "@/lib/route-param";
+import {
+  buildWorkspaceDirectoryHref,
+  getRequestWorkspaceSlug,
+} from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
 export default async function CategoryDetailPage({ params }: { params: { slug: string } }) {
   const categorySlug = decodeRouteParam(params.slug);
-  const items = await listItemsByCategory(categorySlug);
+  const workspaceSlug = getRequestWorkspaceSlug();
+  if (!workspaceSlug) {
+    redirect(buildWorkspaceDirectoryHref(`/categories/${encodeURIComponent(categorySlug)}`));
+  }
+
+  const items = await listItemsByCategoryInWorkspace(categorySlug, workspaceSlug);
   if (items.length === 0) {
     notFound();
   }
 
-  const categoryName = await getCategoryName(categorySlug);
+  const categoryName = await getCategoryName(categorySlug, workspaceSlug);
 
   return (
     <section className="px-5 py-10 sm:px-8 sm:py-12">

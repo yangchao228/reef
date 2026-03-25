@@ -1,4 +1,4 @@
-export type ModuleSlug = "human30" | "openclaw" | "bookmarks";
+export type ModuleSlug = string;
 
 export type DisplayType = "blog" | "timeline" | "bookmarks";
 
@@ -16,7 +16,8 @@ export interface ModuleDefinition {
   description: string;
   displayType: DisplayType;
   accent: string;
-  href: `/${ModuleSlug}`;
+  href: string;
+  icon: string;
 }
 
 export interface ContentStats {
@@ -28,6 +29,7 @@ export interface ContentStats {
 export interface ContentItem {
   id: string;
   module: ModuleSlug;
+  moduleMeta: ModuleDefinition;
   slug: string;
   title: string;
   summary: string;
@@ -45,7 +47,7 @@ export interface CategorySummary {
   slug: string;
   name: string;
   count: number;
-  modules: ModuleSlug[];
+  modules: string[];
 }
 
 export interface CommentRecord {
@@ -74,6 +76,66 @@ export interface AdminSyncLogRecord {
   status: "pending" | "completed" | "failed";
   errorCode?: string;
   errorMessage?: string;
+  failureCategory?: string;
+  recoveryAction?: string;
+  compensationRunId?: string;
+  isRetryable?: boolean;
+  operatorSummary?: string;
   startedAt: string;
   finishedAt?: string;
+}
+
+export interface WorkspaceSummary {
+  slug: string;
+  name: string;
+  description?: string;
+  visibility: "public" | "private";
+  contentCount: number;
+  moduleCount: number;
+  updatedAt: string;
+  membershipRole?: "owner" | "admin" | "editor" | "viewer";
+}
+
+export interface UserSummary {
+  githubLogin: string;
+  name?: string;
+  workspaceCount: number;
+}
+
+export interface GitHubAppInstallationSummary {
+  id: string;
+  githubInstallationId: number;
+  githubAccountLogin: string;
+  githubAccountType: "user" | "organization";
+  permissions: Record<string, unknown>;
+  events: string[];
+  updatedAt: string;
+}
+
+export interface AdminModuleBindingRecord {
+  id: string;
+  slug: string;
+  name: string;
+  githubOwner: string;
+  githubRepo: string;
+  branch: string;
+  watchPaths: string[];
+  recentSync?: {
+    status: "pending" | "completed" | "failed";
+    triggerType: "webhook" | "cron" | "manual";
+    startedAt: string;
+    finishedAt?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    failureCategory?: string;
+    recoveryAction?: string;
+    compensationRunId?: string;
+    isRetryable?: boolean;
+    operatorSummary?: string;
+  };
+  currentInstallation?: {
+    id: string;
+    githubInstallationId: number;
+    githubAccountLogin: string;
+  };
 }

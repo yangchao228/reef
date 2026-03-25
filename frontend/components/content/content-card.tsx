@@ -1,11 +1,8 @@
 import Link from "next/link";
 
-import { getModuleBySlug } from "@/lib/modules";
 import { ContentItem } from "@/lib/types";
 
 export function ContentCard({ item }: { item: ContentItem }) {
-  const module = getModuleBySlug(item.module);
-
   return (
     <Link
       className="group block rounded-2xl border border-border bg-bg-card p-5 transition hover:-translate-y-0.5 hover:border-pri/60"
@@ -15,11 +12,11 @@ export function ContentCard({ item }: { item: ContentItem }) {
         <span
           className="rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.18em]"
           style={{
-            backgroundColor: `${module?.accent ?? "#1D9E75"}1A`,
-            color: module?.accent ?? "#1D9E75",
+            backgroundColor: `${item.moduleMeta.accent}1A`,
+            color: item.moduleMeta.accent,
           }}
         >
-          {module?.shortLabel}
+          {item.moduleMeta.shortLabel}
         </span>
         <span className="text-xs text-t3">
           {new Intl.DateTimeFormat("zh-CN", {

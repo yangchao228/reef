@@ -1,8 +1,11 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { ContentCard } from "@/components/content/content-card";
-import { getModuleBySlug } from "@/lib/modules";
-import { listModuleContent } from "@/lib/content-repository";
+import { getModuleMeta, listModuleContent } from "@/lib/content-repository";
+import {
+  buildWorkspaceDirectoryHref,
+  getRequestWorkspaceSlug,
+} from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +16,22 @@ export default async function ModulePage({
   params: { module: string };
   searchParams: { category?: string; tag?: string };
 }) {
-  const module = getModuleBySlug(params.module);
+  const workspaceSlug = getRequestWorkspaceSlug();
+  const nextParams = new URLSearchParams();
+  if (searchParams.category) {
+    nextParams.set("category", searchParams.category);
+  }
+  if (searchParams.tag) {
+    nextParams.set("tag", searchParams.tag);
+  }
+  const nextPath = nextParams.size
+    ? `/${params.module}?${nextParams.toString()}`
+    : `/${params.module}`;
+  if (!workspaceSlug) {
+    redirect(buildWorkspaceDirectoryHref(nextPath));
+  }
+
+  const module = await getModuleMeta(params.module, workspaceSlug);
   if (!module) {
     notFound();
   }
@@ -21,7 +39,7 @@ export default async function ModulePage({
   const items = await listModuleContent(module.slug, {
     category: searchParams.category,
     tag: searchParams.tag,
-  });
+  }, workspaceSlug);
 
   const groupedByMonth =
     module.displayType === "timeline"

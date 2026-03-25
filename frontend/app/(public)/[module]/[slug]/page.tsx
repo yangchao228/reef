@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { CommentsPanel } from "@/components/content/comments-panel";
 import { InteractionBar } from "@/components/content/interaction-bar";
@@ -9,6 +9,10 @@ import {
   getModuleMeta,
 } from "@/lib/content-repository";
 import { decodeRouteParam } from "@/lib/route-param";
+import {
+  buildWorkspaceDirectoryHref,
+  getRequestWorkspaceSlug,
+} from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -18,13 +22,26 @@ export default async function ContentDetailPage({
   params: { module: string; slug: string };
 }) {
   const decodedSlug = decodeRouteParam(params.slug);
-  const item = await getContentByModuleAndSlug(params.module, decodedSlug);
+  const workspaceSlug = getRequestWorkspaceSlug();
+  if (!workspaceSlug) {
+    redirect(
+      buildWorkspaceDirectoryHref(
+        `/${params.module}/${encodeURIComponent(decodedSlug)}`,
+      ),
+    );
+  }
+
+  const item = await getContentByModuleAndSlug(
+    params.module,
+    decodedSlug,
+    workspaceSlug,
+  );
   if (!item) {
     notFound();
   }
 
-  const module = getModuleMeta(params.module);
-  const comments = await getApprovedComments(item.slug);
+  const module = await getModuleMeta(params.module, workspaceSlug);
+  const comments = await getApprovedComments(item.slug, workspaceSlug);
 
   return (
     <section className="px-5 py-10 sm:px-8 sm:py-12">
@@ -91,7 +108,9 @@ export default async function ContentDetailPage({
           />
         </div>
 
-        {item.module !== "bookmarks" && <CommentsPanel comments={comments} slug={item.slug} />}
+        {module?.displayType !== "bookmarks" && (
+          <CommentsPanel comments={comments} slug={item.slug} />
+        )}
       </article>
     </section>
   );

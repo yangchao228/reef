@@ -1,5 +1,11 @@
+import { redirect } from "next/navigation";
+
 import { ContentCard } from "@/components/content/content-card";
 import { searchContent } from "@/lib/content-repository";
+import {
+  buildWorkspaceDirectoryHref,
+  getRequestWorkspaceSlug,
+} from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +15,13 @@ export default async function SearchPage({
   searchParams: { q?: string };
 }) {
   const query = searchParams.q?.trim() ?? "";
-  const items = query ? await searchContent(query) : [];
+  const workspaceSlug = getRequestWorkspaceSlug();
+  if (!workspaceSlug) {
+    const nextPath = query ? `/search?q=${encodeURIComponent(query)}` : "/search";
+    redirect(buildWorkspaceDirectoryHref(nextPath));
+  }
+
+  const items = query ? await searchContent(query, workspaceSlug) : [];
 
   return (
     <section className="px-5 py-10 sm:px-8 sm:py-12">

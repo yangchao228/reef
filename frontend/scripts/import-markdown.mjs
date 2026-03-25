@@ -10,6 +10,7 @@ import {
   moduleDefaults,
   parseArgs,
   purgeMissingEntries,
+  supportedDisplayTypes,
   upsertMarkdownEntries,
 } from "./import-lib.mjs";
 
@@ -35,31 +36,54 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const moduleSlug = args.module;
   const sourceDir = args.dir;
+  const workspaceSlug = args.workspace;
+  const customName = args.name?.trim();
+  const customDisplayType = args["display-type"]?.trim();
 
   if (!moduleSlug || !sourceDir) {
     console.error(
-      "Usage: npm run import:markdown -- --module <human30|openclaw|bookmarks> --dir <markdown-directory> [--purge-missing]",
+      "Usage: npm run import:markdown -- --module <module-slug> --dir <markdown-directory> [--workspace workspace-slug] [--purge-missing] [--name module-name --display-type blog|timeline|bookmarks]",
     );
     process.exit(1);
   }
 
-  const defaults = moduleDefaults[moduleSlug];
-  if (!defaults) {
-    console.error(`Unsupported module: ${moduleSlug}`);
+  const preset = moduleDefaults[moduleSlug];
+  if (!preset && (!customName || !customDisplayType)) {
+    console.error(
+      `Module "${moduleSlug}" 没有内置 preset。请补充 --name 和 --display-type，或使用内置示例模块：${Object.keys(moduleDefaults).join(", ")}。`,
+    );
     process.exit(1);
   }
+
+  if (customDisplayType && !supportedDisplayTypes.has(customDisplayType)) {
+    console.error(
+      `Unsupported display type: ${customDisplayType}. Expected one of: ${Array.from(supportedDisplayTypes).join(", ")}.`,
+    );
+    process.exit(1);
+  }
+
+  const defaults = preset ?? {
+    name: customName,
+    displayType: customDisplayType,
+  };
 
   const sql = createSqlClient();
 
   const markdownFiles = await collectMarkdownFiles(path.resolve(sourceDir));
-  const repoId = await ensureRepoRecord(sql, moduleSlug, defaults, {
-    githubOwner: "local",
-    githubRepo: moduleSlug,
-    watchPaths: [path.resolve(sourceDir)],
-    meta: {
-      source: "local",
+  const { repoId, workspaceId } = await ensureRepoRecord(
+    sql,
+    moduleSlug,
+    defaults,
+    {
+      githubOwner: "local",
+      githubRepo: moduleSlug,
+      watchPaths: [path.resolve(sourceDir)],
+      meta: {
+        source: "local",
+      },
     },
-  });
+    workspaceSlug,
+  );
 
   const entries = [];
 
@@ -75,7 +99,7 @@ async function main() {
     });
   }
 
-  const importedPaths = await upsertMarkdownEntries(sql, repoId, entries);
+  const importedPaths = await upsertMarkdownEntries(sql, repoId, entries, workspaceId);
 
   if (args["purge-missing"] === "true" && importedPaths.length > 0) {
     await purgeMissingEntries(sql, repoId, importedPaths);

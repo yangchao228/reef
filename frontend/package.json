@@ -7,8 +7,13 @@
     "build": "next build",
     "start": "next start",
     "db:init": "node scripts/init-db.mjs",
+    "db:init:v2": "npm run db:init",
+    "db:verify:v2": "node scripts/verify-v2-schema.mjs",
+    "workspace:ensure": "node scripts/ensure-workspace.mjs",
     "import:markdown": "node scripts/import-markdown.mjs",
     "sync:github": "node scripts/sync-github.mjs",
+    "sync:compensate": "node scripts/compensate-sync.mjs",
+    "test:unit": "node --test lib/sync/logging.test.mjs lib/sync/ops.test.mjs lib/sync/compensation.test.mjs",
     "test:smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {

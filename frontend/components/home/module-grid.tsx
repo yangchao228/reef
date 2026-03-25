@@ -1,13 +1,15 @@
 import Link from "next/link";
 
-import { listModuleContent } from "@/lib/content-repository";
-import { modules } from "@/lib/modules";
+import { listModuleContent, listModules } from "@/lib/content-repository";
+import { getRequestWorkspaceSlug } from "@/lib/workspace";
 
 export async function ModuleGrid() {
+  const workspaceSlug = getRequestWorkspaceSlug();
+  const modules = await listModules(workspaceSlug);
   const counts = await Promise.all(
     modules.map(async (module) => ({
       module: module.slug,
-      count: (await listModuleContent(module.slug)).length,
+      count: (await listModuleContent(module.slug, undefined, workspaceSlug)).length,
     })),
   );
 
@@ -27,7 +29,7 @@ export async function ModuleGrid() {
                 className="grid h-10 w-10 place-items-center rounded-2xl text-sm text-t1"
                 style={{ backgroundColor: `${module.accent}1A` }}
               >
-                {module.slug === "human30" ? "H" : module.slug === "openclaw" ? "虾" : "↗"}
+                {module.icon}
               </div>
               <p className="mt-4 text-[11px] uppercase tracking-[0.22em] text-t3">
                 {module.shortLabel}

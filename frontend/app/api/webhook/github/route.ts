@@ -18,7 +18,8 @@ type RepoRegistryMeta = {
 };
 
 type RepoRegistryRow = {
-  id: string;
+  repo_id: string;
+  workspace_id: string;
   slug: ModuleSlug;
   watch_paths: string[];
   meta: RepoRegistryMeta | null;
@@ -193,15 +194,17 @@ export async function POST(request: NextRequest) {
   }
 
   const sql = getSql();
-  const rows = await sql.unsafe<RepoRegistryRow[]>(
-    `
-      SELECT id, slug, watch_paths, meta
-      FROM repo_registry
-      WHERE github_owner = $1
-        AND github_repo = $2
-    `,
-    [owner, repo],
-  );
+  const rows = await sql<RepoRegistryRow[]>`
+    SELECT
+      rr.id AS repo_id,
+      rr.workspace_id,
+      rr.slug,
+      rr.watch_paths,
+      rr.meta
+    FROM repo_registry rr
+    WHERE rr.github_owner = ${owner}
+      AND rr.github_repo = ${repo}
+  `;
 
   const candidates = rows.filter((row) => {
     const configuredBranch = row.meta?.branch;
@@ -237,6 +240,8 @@ export async function POST(request: NextRequest) {
           triggerType: "webhook",
           commitSha,
           fileCounts,
+          existingRepoId: candidate.repo_id,
+          existingWorkspaceId: candidate.workspace_id,
           sqlClient: sql,
         }),
       );

@@ -1,308 +1,327 @@
-# Reef · 开发文档 v1.2
+# Reef · 开发文档 v2.0
 
-**文档状态：** 可执行版本（修订）  
-**创建日期：** 2026-03-19  
-**依据文档：** `docs/design.md`（v6.0）
+**文档状态：** 当前可执行版本  
+**更新日期：** 2026-03-24  
+**关联文档：** `docs/design.md`、`docs/product-direction.md`、`docs/phased-roadmap.md`
 
 ---
 
 ## 一、文档目标
 
-本文档将系统设计转化为工程实施方案，用于指导开发排期、接口实现、数据模型落地、部署与验收。
+本文档用于描述 Reef 当前主干的真实工程状态，统一：
 
-当前版本明确采用分阶段实施策略：**第一期默认使用 `Next.js-only` 方案，不实现 Go 后端**；同步、持久化与正式后台能力按后续阶段逐步接入。
+1. 当前运行时架构；
+2. 当前多租户数据模型；
+3. 当前鉴权、同步、后台运维与 CI 主链；
+4. 下一阶段仍需收口的工作。
 
-核心目标：
+当前主线已经不是“单租户内容站原型”，而是：
 
-1. 明确第一期 `Next.js-only` 的代码组织与页面边界；
-2. 明确互动原型、数据访问层与后续正式同步链路的衔接方式；
-3. 明确 API、数据库、鉴权、安全与运维基线；
-4. 明确分阶段交付与验收标准。
+> 以 `workspace` 为边界、以 GitHub App 为授权主线、以数字资产沉淀为核心目标的多租户资产平台底座。
 
 ---
 
-## 二、范围与原则
+## 二、当前阶段判断
 
-### 2.1 范围
+当前项目处于 `Phase 1 -> Phase 2` 的收口阶段：
 
-- 本文档覆盖 Reef v6.0 的开发实施（前台、后台、同步、互动、部署）。
-- 不包含在线编辑器、图片托管系统、多用户协作、私有内容分级等非目标能力。
+- `v1` 内容平台原型已经可用；
+- `v2` 多租户 schema 已进入运行时与 CI；
+- 后台审核、模块绑定、手动同步、失败重试和风险提示已具备；
+- 正式 GitHub OAuth / GitHub App 身份链路已接入，但仍有少量开发态 fallback 尚未彻底退出；
+- 定时补偿同步、失败重试自动化、更多后台运维细节仍待继续补齐。
+- 当前补偿脚本已具备 workspace 级并发保护和短窗口去重保护，避免重复执行同一轮补偿。
 
-### 2.2 实施原则
-
-- **GitHub 为唯一内容源**：Markdown 原文不在系统内编辑与托管；
-- **数据库存镜像与互动**：存储索引、缓存、评论、点赞、阅读量；
-- **第一期 Next.js-only**：首版由 Next.js 页面、Route Handlers 与 `lib/*` 数据访问层组成；
-- **同步链路后置**：Webhook 主驱动 + Cron 兜底保留为后续阶段正式实现；
-- **页面与数据访问分层**：页面不直接耦合数据源细节，便于从本地开发库切换到托管数据库。
+当前不再把单租户 schema 视为有效运行选项。
 
 ---
 
 ## 三、技术架构与仓库组织
 
-## 3.1 技术选型
+### 3.1 当前技术选型
 
-- 前端：Next.js 14（App Router）+ Tailwind CSS + next-themes + next-mdx-remote
-- 第一期服务端：Next.js Route Handlers + Server Components + `frontend/lib/*`
-- 后续阶段预留：Go 1.22 + Gin + pgx + sqlc + go-redis
-- 数据：Supabase PostgreSQL + Upstash Redis
-- 外部：GitHub API / OAuth / Webhook
-- 部署：Docker + docker-compose + Nginx
+- 前端与服务端：Next.js 14（App Router）
+- 数据访问：`frontend/lib/*` + Route Handlers
+- 数据库：PostgreSQL
+- 内容源：GitHub repo / Markdown
+- 授权主线：GitHub OAuth + GitHub App installation
+- 搜索与前台展示：Next.js 页面 + 当前 workspace 动态模块清单
+- 部署形态：当前主干仍以单体 Next.js 服务为主，不引入独立 Go 服务
 
-## 3.2 目录结构（建议实现）
+### 3.2 当前仓库组织
 
 ```text
 reef/
 ├── frontend/
 │   ├── app/
 │   │   ├── (public)/
-│   │   └── admin/
+│   │   ├── admin/
+│   │   ├── auth/
+│   │   └── github-app/
 │   ├── components/
-│   └── lib/
+│   ├── db/init/
+│   ├── lib/
+│   └── scripts/
 ├── docs/
-│   ├── design.md
-│   └── development.md
-└── docker-compose.yml
+└── .github/workflows/
 ```
 
-> 说明：`backend/` 目录在第一期不是默认交付物；若出现，仅视为后续阶段预留或预研代码。
+### 3.3 当前运行时边界
 
-## 3.3 第一期间接口边界
-
-- 前端（Next.js）仅负责页面渲染与交互，不直接连接数据库；
-- Next.js Route Handlers 承担首版 API、轻量交互与临时数据访问层；
-- 前端通过 `frontend/lib/api.ts` 请求同域 `/api/*`；
-- Nginx 统一入口直接转发至 Next.js 服务。
+- 页面层不直接写 SQL；
+- 数据访问通过 `frontend/lib/*` repository 与服务函数集中处理；
+- 请求上下文必须显式解析当前 `workspace`；
+- 后台、同步、互动、前台查询全部以 `workspace_id` 为边界；
+- 当前唯一支持的初始化 schema 为 `frontend/db/init/002_multitenant_v2.sql`。
 
 ---
 
-## 四、数据库落地规范
+## 四、当前数据模型
 
-## 4.1 表结构
+### 4.1 当前主干使用的 v2 多租户表
 
-沿用设计文档定义的 7 张表：
+当前运行时和 CI 使用的是 `frontend/db/init/002_multitenant_v2.sql`，核心表包括：
 
+- `users`
+- `workspaces`
+- `workspace_members`
+- `github_app_installations`
 - `repo_registry`
 - `categories`
 - `content_items`
 - `sync_logs`
-- `likes`
 - `comment_authors`
 - `comments`
+- `likes`
+- `view_events`
 
-## 4.2 迁移规范
+### 4.2 核心约束
 
-- 迁移文件放置于 `backend/migrations/`；
-- 已执行迁移**只增不改**；
-- 每次 schema 变更必须附带回滚脚本（若工具支持）。
+- 所有内容、互动、同步日志都必须显式绑定 `workspace_id`
+- `workspace_members` 决定当前 workspace 内角色
+- `repo_registry` 在 workspace 内唯一，模块定义来自数据库，不再来自硬编码枚举
+- `github_app_installations` 与 workspace 绑定，repo 同步权限按 installation 解析
+- 评论、点赞、阅读去重都已改为 workspace 级约束
 
-## 4.3 索引建议
+### 4.3 当前不再支持的旧假设
 
-建议额外创建以下索引：
-
-- `content_items(slug)`
-- `content_items(repo_id, published_at DESC)`
-- `content_items(category_id)`
-- `comments(content_item_id, status, created_at DESC)`
-- `sync_logs(repo_id, started_at DESC)`
-
----
-
-## 五、同步链路实现（后续阶段）
-
-## 5.1 Webhook 同步（主链路，后续阶段）
-
-接口：`POST /api/webhook/github`
-
-执行流程：
-
-1. 验证 GitHub `X-Hub-Signature-256`；
-2. 解析 push payload 与变更文件；
-3. 过滤 `watch_paths` 且扩展名为 `.md` 的文件；
-4. 调用 GitHub Contents API 拉取内容；
-5. 解析 frontmatter 与正文；
-6. 分类 slug 不存在则自动创建；
-7. Upsert `content_items`，处理删除文件；
-8. 写入 `sync_logs`。
-
-失败策略：
-
-- 单文件失败不阻断整批；
-- 将错误写入 `sync_logs.error_detail`；
-- 保证请求可重放与幂等。
-
-## 5.2 Cron 兜底同步（补偿链路，后续阶段）
-
-- 调度：每 30 分钟；
-- 逻辑：对比 repo 最近 commit sha，发现偏差触发增量同步；
-- 并发控制：使用 Redis 锁，避免重复执行。
+- 单租户 `001_schema.sql`
+- 不带 `workspace_id` 的查询/写入分支
+- 全局 repo / 全局 slug / 全局 fingerprint 假设
+- 请求未指定 workspace 时静默回退到默认空间
 
 ---
 
-## 六、互动链路实现
+## 五、身份、权限与工作区模型
 
-## 6.1 阅读量
+### 5.1 当前身份链路
 
-接口：`POST /api/content/:slug/view`
+- `/workspaces` 负责当前登录身份建立、workspace 选择和 workspace 创建入口
+- 正式 GitHub 登录通过 `GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET` 驱动
+- 运行时默认读取统一用户会话语义：`x-reef-user-login` / `reef_user_login`
+- `x-reef-user-login` / `reef_user_login` 是当前唯一用户身份解析入口
+- `reef_admin_login` 旧 cookie 已退出运行时主链
 
-- Redis Key：`viewed:{fingerprint}:{slug}`，TTL 24h；
-- 命中则不计数；未命中则写 key 并 `view_count + 1`；
-- 后台登录访问不计数。
+### 5.2 当前后台权限模型
 
-## 6.2 点赞
+- `/admin` 按 workspace 成员关系鉴权
+- 当前 workspace 内角色为 `owner` 或 `admin` 才能访问后台
+- 后台不再依赖 IP 白名单，也不再依赖单一系统管理员模型
 
-接口：`POST /api/content/:slug/like`
+### 5.3 当前工作区解析要求
 
-- 去重键：`(content_item_id, fingerprint)` 唯一约束；
-- 不存在则插入（点赞），存在则删除（取消）；
-- 返回最新点赞总数。
-
-## 6.3 评论与审核
-
-- 提交接口：`POST /api/content/:slug/comments`
-- 审核接口：`PUT /api/admin/comments/:id`
-
-规则：
-
-- 游客可提交昵称 + 内容；
-- 新评论状态默认 `pending`；
-- 仅 `approved` 评论在前台展示；
-- 通过 fingerprint 复用 `comment_authors`。
+- 请求侧通过 `x-reef-workspace` 或 `reef_workspace` cookie 指定当前 workspace
+- 未选择 workspace 时，依赖内容上下文的页面会跳转到 `/workspaces`
+- 脚本侧通过 `REEF_WORKSPACE_SLUG` 或 `--workspace` 显式指定目标 workspace
 
 ---
 
-## 七、API 规范
+## 六、内容与同步链路
 
-## 7.1 统一响应结构
+### 6.1 内容来源
 
-```json
-// success
-{ "data": {}, "error": null }
+- GitHub Markdown 仍是内容真相源
+- 数据库保存的是镜像、索引、互动与同步状态
+- 本地和 CI 仍支持 fixture / Markdown 目录导入
 
-// failed
-{ "data": null, "error": { "code": "UNAUTHORIZED", "message": "..." } }
-```
+### 6.2 当前同步主链
 
-## 7.2 关键错误码
+- 手动脚本可从本地目录或 GitHub repo 拉取 Markdown
+- 运行时支持 `POST /api/webhook/github`
+- webhook / 手动同步都会写入 `sync_logs`
+- 同步授权优先走 `workspace -> github_app_installations -> installation token`
+- `GITHUB_TOKEN` 与 `GITHUB_APP_INSTALLATION_TOKENS_JSON` 只保留为开发态 fallback
 
-- `WEBHOOK_SIGNATURE_INVALID`
-- `SYNC_IN_PROGRESS`
-- `GITHUB_API_RATE_LIMIT`
-- `CONTENT_NOT_FOUND`
-- `UNAUTHORIZED`
+### 6.3 当前后台运维能力
 
-## 7.3 权限模型
+- 维护 workspace 的 GitHub App installation
+- 绑定模块与 installation
+- 手动触发模块同步
+- 失败后直接重试同步
+- 查看模块级最近同步状态、错误提示和风险提示
+- 查看最近同步日志
 
-- Public：前台内容、点赞、阅读、评论提交
-- Admin：仓库管理、同步管理、评论审核
-- 鉴权：NextAuth + GitHub OAuth，管理员由 `ADMIN_GITHUB_ID` 白名单控制
+### 6.4 仍待继续补齐的同步能力
 
----
+- 定时补偿同步的系统调度层
+- 更明确的失败重试策略
+- 更细的同步日志可视化和运营指标
 
-## 八、前端开发规范
+当前已经补了一个可直接被系统定时器调用的补偿脚本：
 
-- 优先使用 RSC 获取数据，减少客户端 JS；
-- 所有 API 请求统一封装于 `frontend/lib/api.ts`；
-- 组件命名使用 PascalCase；工具函数使用 camelCase；
-- 主题色通过 CSS 变量驱动，不硬编码颜色；
-- 明暗主题由 `next-themes` 控制，默认 `system`。
-
----
-
-## 九、服务端实现规范
-- 第一期默认不新增 Go 服务；
-- 需要服务端逻辑时，优先使用 Next.js Route Handlers / Server Components / `frontend/lib/*`；
-- 所有接口保持统一响应结构，不在页面组件内直接散落 `fetch`；
-- 本地开发库与正式数据源之间通过统一数据访问层切换；
-- 若进入后续 Go 阶段，再补充 Handler / service / db 分层与 Go 代码规范。
+- `npm run sync:compensate -- --workspace <workspace-slug>`
+- 支持 `--only-failed`
+- 支持 `--module <module-slug>`
+- 支持 `--dedupe-window-minutes <n>`
+- 只会处理 `meta.source = github` 的模块，并把结果继续写入 `sync_logs`
+- 同一 workspace 的补偿运行会先拿 advisory lock，避免并发补偿互相重叠
+- 默认带 10 分钟去重窗口，短时间内重复触发相同范围补偿会直接跳过
 
 ---
 
-## 十、部署与环境
+## 七、互动与后台审核
 
-## 10.1 环境变量
+### 7.1 当前互动接口
 
-关键变量：
+- 阅读：`POST /api/content/:slug/view`
+- 点赞：`POST /api/content/:slug/like`
+- 评论提交：`POST /api/content/:slug/comments`
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_ANON_KEY`
-- `KV_REST_API_URL`
-- `KV_REST_API_TOKEN`
-- `GITHUB_TOKEN`
-- `GITHUB_WEBHOOK_SECRET`
+### 7.2 当前评论审核闭环
+
+- 新评论默认 `pending`
+- 后台可直接批准或拒绝
+- 只有 `approved` 评论在前台可见
+- smoke test 已覆盖“提交评论 -> 后台审核 -> 前台展示”闭环
+
+---
+
+## 八、CI 与验收
+
+### 8.1 当前 CI 主链
+
+`.github/workflows/ci.yml` 当前执行：
+
+1. 安装依赖
+2. 初始化 `v2` schema
+3. 创建默认测试 workspace
+4. 校验 `v2` schema
+5. 运行库级同步测试
+6. 导入 fixture 内容
+7. 运行 `npm run build`
+8. 启动服务
+9. 运行 `npm run test:smoke`
+
+### 8.2 当前 smoke 覆盖重点
+
+- workspace 上下文可用
+- 前台内容基础访问
+- 评论提交与后台审核闭环
+- 后台同步风险提示
+- 手动同步失败后的错误展示
+- 失败模块显示“重试同步”
+
+---
+
+## 九、环境变量
+
+按当前实现，环境变量分为四组。
+
+### 9.1 本地开发必需
+
+- `DATABASE_URL`
+- `REEF_WORKSPACE_SLUG`
+- `REEF_ADMIN_GITHUB_LOGIN`
+- `NEXT_PUBLIC_SITE_URL`
+- `NEXTAUTH_URL`
+- `NEXTAUTH_SECRET`
+
+### 9.2 推荐配置
+
 - `GITHUB_CLIENT_ID`
 - `GITHUB_CLIENT_SECRET`
-- `NEXTAUTH_SECRET`
-- `NEXTAUTH_URL`
-- `NEXT_PUBLIC_SITE_URL`
-- `NEXT_PUBLIC_URL`
-- `ADMIN_GITHUB_ID`
+- `GITHUB_OAUTH_STATE_SECRET`
+- `GITHUB_APP_NAME`
+- `GITHUB_APP_STATE_SECRET`
 
-## 10.2 部署步骤（最小闭环）
+### 9.3 生产 GitHub App 主链必需
 
-1. 配置 `.env` 并设置权限 `chmod 600 .env`；
-2. 安装前端依赖并完成 `frontend` 构建；
-3. 启动 Next.js 容器；
-4. 配置 Nginx 与 HTTPS；
-5. 验证首页、模块页、搜索与互动原型可访问；
-6. 后续阶段再接入数据库迁移、GitHub Webhook 与正式同步链路。
+- `GITHUB_APP_ID`
+- `GITHUB_APP_PRIVATE_KEY` 或 `GITHUB_APP_PRIVATE_KEY_BASE64`
+- `GITHUB_WEBHOOK_SECRET`
 
----
+### 9.4 开发态 fallback / 测试专用
 
-## 十一、里程碑与验收
+- `GITHUB_TOKEN`
+- `GITHUB_APP_INSTALLATION_TOKENS_JSON`
+- `SMOKE_BASE_URL`
 
-## Phase 0（3 天）Next.js 基线
+说明：
 
-交付：`frontend/`、主题系统、路由结构、环境变量样板、容器可启动。
-
-验收：`cd frontend && npm run build` 通过，首页可访问。
-
-## Phase 1（1 周）前台展示与原型交互
-
-交付：blog / timeline / bookmarks 三模块，分类/标签/搜索，点赞/阅读量/评论原型。
-
-验收：三模块可访问，筛选与搜索有效，互动原型可用。
-
-## Phase 2（3 天）托管数据库切换
-
-交付：接入 Supabase 或正式 PostgreSQL，替换本地开发库配置。
-
-验收：互动数据在正式数据库中可持久化，页面不再依赖本地开发库地址。
-
-## Phase 3（3 天）后台管理
-
-交付：GitHub OAuth、评论审核、基础配置页、同步状态页。
-
-验收：管理页功能可用，权限控制正确。
-
-## Phase 4（1 周）正式同步链路
-
-交付：Webhook、内容解析、分类自动创建、Upsert、sync 日志、cron 兜底。
-
-验收：push `.md` 后 30 秒内数据库出现变更记录。
+- `GITHUB_TOKEN` 不再是自动同步主链前提；
+- `GITHUB_APP_INSTALLATION_TOKENS_JSON` 只适合本地桥接调试；
+- `.env.example` 为当前推荐最小模板。
 
 ---
 
-## 十二、风险与缓解
+## 十、本地开发与部署最小闭环
 
-- **GitHub API 限流**：进入正式同步阶段后使用增量同步 + sha 对比，减少 API 调用。
-- **Webhook 漏事件**：在 Phase 4 引入 cron 补偿兜底。
-- **垃圾评论**：默认 pending + 后台审核。
-- **低配 VPS 资源紧张**：优化镜像与并发，监控内存峰值。
+### 10.1 本地开发最小闭环
+
+1. 复制 `.env.example` 为 `.env`
+2. 启动本地 PostgreSQL
+3. 在 `frontend/` 下执行 `npm install`
+4. 运行 `npm run db:init`
+5. 运行 `npm run workspace:ensure`
+6. 导入 fixture 或本地 Markdown 内容
+7. 启动 `npm run dev`
+8. 访问 `/workspaces` 建立身份并选择 workspace
+9. 访问 `/admin` 验证后台运维链路
+
+### 10.2 当前部署验收点
+
+- workspace 目录页可访问
+- 当前 workspace 可正常浏览内容
+- `/admin` 能读取评论队列、installation、模块状态和同步日志
+- 手动同步入口可见
+- smoke test 可通过
 
 ---
 
-## 十三、上线前检查清单
+## 十一、当前阶段里程碑
 
-- [ ] 第一期开发不引入 Go 后端
-- [ ] 所有必需环境变量已校验
-- [ ] `frontend` 构建通过
-- [ ] 互动接口具备原型级幂等控制
-- [ ] 后台仅管理员可访问
-- [ ] HTTPS 与强制跳转已配置
-- [ ] Webhook 签名验证在后续同步阶段启用
+### 已完成
+
+- `v1` 内容平台原型
+- `v2` 多租户 schema 落地
+- workspace 选择与当前身份建立
+- 评论审核闭环
+- GitHub App installation 保存与模块绑定
+- 后台模块手动同步、失败重试和风险提示
+- CI 多租户化与 smoke 扩展
+
+### 正在收口
+
+- 继续清理少量 legacy 命名与文档残留
+- 继续补同步补偿与后台运维细节
+- 继续扩大自动化验证覆盖
+
+### 明确后置
+
+- Agent Module / OpenClaw 接入
+- 更复杂的资产检索层与长期记忆层
 
 ---
 
-*Reef 开发文档 v1.2 · 第一阶段采用 Next.js-only 实施*
+## 十二、下一步建议
+
+当前最合适的后续顺序仍是：
+
+1. 继续完善同步补偿和失败恢复；
+2. 继续清理剩余单租户/过渡逻辑；
+3. 继续扩大 CI 和 smoke 对后台主链的覆盖；
+4. 主链稳定后，再推进 Agent Module。
+
+---
+
+*Reef 开发文档 v2.0 · 当前主干以多租户资产底座收口为核心*

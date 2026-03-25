@@ -1,10 +1,10 @@
 import Link from "next/link";
 
 import { listLatestItems } from "@/lib/content-repository";
-import { getModuleBySlug } from "@/lib/modules";
+import { getRequestWorkspaceSlug } from "@/lib/workspace";
 
 export async function UpdateTimeline() {
-  const items = await listLatestItems(6);
+  const items = await listLatestItems(6, getRequestWorkspaceSlug());
 
   return (
     <section className="px-5 pb-14 sm:px-8">
@@ -23,7 +23,6 @@ export async function UpdateTimeline() {
 
         <div className="relative pl-8 before:absolute before:left-3.5 before:top-1 before:h-[calc(100%-0.5rem)] before:w-px before:bg-border">
           {items.map((item) => {
-            const module = getModuleBySlug(item.module);
             return (
               <Link
                 className="group relative mb-4 block rounded-2xl border border-border bg-bg px-5 py-4 transition hover:border-pri/60"
@@ -32,11 +31,11 @@ export async function UpdateTimeline() {
               >
                 <span
                   className="absolute -left-[1.85rem] top-5 h-3 w-3 rounded-full border-2 border-bg-card"
-                  style={{ backgroundColor: module?.accent }}
+                  style={{ backgroundColor: item.moduleMeta.accent }}
                 />
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[var(--tag-c)]">
-                    {module?.shortLabel}
+                    {item.moduleMeta.shortLabel}
                   </span>
                   <span className="text-xs text-t3">
                     {new Intl.DateTimeFormat("zh-CN", {

@@ -1,13 +1,25 @@
 import { getSql } from "@/lib/db";
-import { getModuleBySlug } from "@/lib/modules";
+import { buildModuleDefinition } from "@/lib/modules";
+import { parseStoredSyncErrorDetail } from "@/lib/sync/logging.mjs";
 import {
   AdminCommentRecord,
   AdminSyncLogRecord,
   CategorySummary,
   CommentRecord,
   ContentItem,
+  DisplayType,
+  ModuleDefinition,
   ModuleSlug,
 } from "@/lib/types";
+
+function resolveWorkspaceSlug(workspaceSlug?: string | null) {
+  const normalized = workspaceSlug?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized;
+}
 
 function splitMarkdownBody(content: string) {
   return content
@@ -19,6 +31,9 @@ function splitMarkdownBody(content: string) {
 function mapContentRow(row: {
   id: string;
   module: ModuleSlug;
+  module_name: string;
+  module_display_type: DisplayType;
+  module_meta: unknown;
   slug: string;
   title: string | null;
   summary: string | null;
@@ -36,6 +51,12 @@ function mapContentRow(row: {
   return {
     id: row.id,
     module: row.module,
+    moduleMeta: buildModuleDefinition({
+      slug: row.module,
+      name: row.module_name,
+      displayType: row.module_display_type,
+      meta: row.module_meta,
+    }),
     slug: row.slug,
     title: row.title ?? "未命名内容",
     summary: row.summary ?? "",
@@ -62,11 +83,18 @@ async function runContentQuery(whereClause?: {
   category?: string;
   tag?: string;
   slug?: string;
-}) {
+}, workspaceSlug?: string | null) {
   const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return [];
+  }
   const rows = await sql<{
     id: string;
     module: ModuleSlug;
+    module_name: string;
+    module_display_type: DisplayType;
+    module_meta: unknown;
     slug: string;
     title: string | null;
     summary: string | null;
@@ -84,6 +112,9 @@ async function runContentQuery(whereClause?: {
     SELECT
       ci.id,
       rr.slug AS module,
+      rr.name AS module_name,
+      rr.display_type AS module_display_type,
+      rr.meta AS module_meta,
       ci.slug,
       ci.title,
       ci.summary,
@@ -95,17 +126,26 @@ async function runContentQuery(whereClause?: {
       ci.source_url,
       ci.source_platform,
       ci.view_count,
-      (SELECT COUNT(*)::int FROM likes l WHERE l.content_item_id = ci.id) AS like_count,
+      (
+        SELECT COUNT(*)::int
+        FROM likes l
+        WHERE l.content_item_id = ci.id
+          AND l.workspace_id = ci.workspace_id
+      ) AS like_count,
       (
         SELECT COUNT(*)::int
         FROM comments cm
         WHERE cm.content_item_id = ci.id
+          AND cm.workspace_id = ci.workspace_id
           AND cm.status = 'approved'
       ) AS comment_count
     FROM content_items ci
-    JOIN repo_registry rr ON rr.id = ci.repo_id
-    LEFT JOIN categories c ON c.id = ci.category_id
+    JOIN repo_registry rr ON rr.id = ci.repo_id AND rr.workspace_id = ci.workspace_id
+    LEFT JOIN categories c ON c.id = ci.category_id AND c.workspace_id = ci.workspace_id
     WHERE ci.status = 'published'
+      AND rr.workspace_id = (
+        SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+      )
       ${whereClause?.module ? sql`AND rr.slug = ${whereClause.module}` : sql``}
       ${whereClause?.category ? sql`AND c.slug = ${whereClause.category}` : sql``}
       ${whereClause?.tag ? sql`AND ${whereClause.tag} = ANY(ci.tags)` : sql``}
@@ -116,33 +156,42 @@ async function runContentQuery(whereClause?: {
   return rows.map(mapContentRow);
 }
 
-export async function listAllContent() {
-  return runContentQuery();
+export async function listAllContent(workspaceSlug?: string | null) {
+  return runContentQuery(undefined, workspaceSlug);
 }
 
 export async function listModuleContent(
-  module: ModuleSlug,
+  module: string,
   filters?: { category?: string; tag?: string },
+  workspaceSlug?: string | null,
 ) {
   return runContentQuery({
     module,
     category: filters?.category,
     tag: filters?.tag,
-  });
+  }, workspaceSlug);
 }
 
-export async function getContentByModuleAndSlug(module: string, slug: string) {
-  const items = await runContentQuery({ module, slug });
+export async function getContentByModuleAndSlug(
+  module: string,
+  slug: string,
+  workspaceSlug?: string | null,
+) {
+  const items = await runContentQuery({ module, slug }, workspaceSlug);
   return items[0] ?? null;
 }
 
-export async function listLatestItems(limit = 6) {
-  const items = await listAllContent();
+export async function listLatestItems(limit = 6, workspaceSlug?: string | null) {
+  const items = await runContentQuery(undefined, workspaceSlug);
   return items.slice(0, limit);
 }
 
-export async function listCategories() {
+export async function listCategories(workspaceSlug?: string | null) {
   const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return [];
+  }
   const rows = await sql<{
     slug: string;
     name: string;
@@ -155,9 +204,12 @@ export async function listCategories() {
       COUNT(ci.id)::int AS count,
       ARRAY_AGG(DISTINCT rr.slug ORDER BY rr.slug) AS modules
     FROM categories c
-    JOIN content_items ci ON ci.category_id = c.id
-    JOIN repo_registry rr ON rr.id = ci.repo_id
+    JOIN content_items ci ON ci.category_id = c.id AND ci.workspace_id = c.workspace_id
+    JOIN repo_registry rr ON rr.id = ci.repo_id AND rr.workspace_id = ci.workspace_id
     WHERE ci.status = 'published'
+      AND c.workspace_id = (
+        SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+      )
     GROUP BY c.slug, c.name
     ORDER BY count DESC, c.name ASC
   `;
@@ -167,29 +219,73 @@ export async function listCategories() {
       slug: row.slug,
       name: row.name,
       count: Number(row.count),
-      modules: row.modules as ModuleSlug[],
+      modules: row.modules,
+    }),
+  );
+}
+
+export async function listModules(workspaceSlug?: string | null) {
+  const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return [];
+  }
+  const rows = await sql<{
+    slug: string;
+    name: string;
+    display_type: DisplayType;
+    meta: unknown;
+  }[]>`
+    SELECT rr.slug, rr.name, rr.display_type, rr.meta
+    FROM repo_registry rr
+    WHERE rr.workspace_id = (
+      SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+    )
+    ORDER BY rr.sort_order ASC, rr.name ASC
+  `;
+
+  return rows.map((row): ModuleDefinition =>
+    buildModuleDefinition({
+      slug: row.slug,
+      name: row.name,
+      displayType: row.display_type,
+      meta: row.meta,
     }),
   );
 }
 
 export async function listItemsByCategory(categorySlug: string) {
-  return runContentQuery({ category: categorySlug });
+  return runContentQuery({ category: categorySlug }, undefined);
 }
 
-export async function listItemsByTag(tag: string) {
-  return runContentQuery({ tag });
+export async function listItemsByCategoryInWorkspace(
+  categorySlug: string,
+  workspaceSlug?: string | null,
+) {
+  return runContentQuery({ category: categorySlug }, workspaceSlug);
 }
 
-export async function searchContent(query: string) {
+export async function listItemsByTag(tag: string, workspaceSlug?: string | null) {
+  return runContentQuery({ tag }, workspaceSlug);
+}
+
+export async function searchContent(query: string, workspaceSlug?: string | null) {
   const normalized = query.trim();
   if (!normalized) {
     return [];
   }
 
   const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return [];
+  }
   const rows = await sql<{
     id: string;
     module: ModuleSlug;
+    module_name: string;
+    module_display_type: DisplayType;
+    module_meta: unknown;
     slug: string;
     title: string | null;
     summary: string | null;
@@ -207,6 +303,9 @@ export async function searchContent(query: string) {
     SELECT
       ci.id,
       rr.slug AS module,
+      rr.name AS module_name,
+      rr.display_type AS module_display_type,
+      rr.meta AS module_meta,
       ci.slug,
       ci.title,
       ci.summary,
@@ -218,17 +317,26 @@ export async function searchContent(query: string) {
       ci.source_url,
       ci.source_platform,
       ci.view_count,
-      (SELECT COUNT(*)::int FROM likes l WHERE l.content_item_id = ci.id) AS like_count,
+      (
+        SELECT COUNT(*)::int
+        FROM likes l
+        WHERE l.content_item_id = ci.id
+          AND l.workspace_id = ci.workspace_id
+      ) AS like_count,
       (
         SELECT COUNT(*)::int
         FROM comments cm
         WHERE cm.content_item_id = ci.id
+          AND cm.workspace_id = ci.workspace_id
           AND cm.status = 'approved'
       ) AS comment_count
     FROM content_items ci
-    JOIN repo_registry rr ON rr.id = ci.repo_id
-    LEFT JOIN categories c ON c.id = ci.category_id
+    JOIN repo_registry rr ON rr.id = ci.repo_id AND rr.workspace_id = ci.workspace_id
+    LEFT JOIN categories c ON c.id = ci.category_id AND c.workspace_id = ci.workspace_id
     WHERE ci.status = 'published'
+      AND rr.workspace_id = (
+        SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+      )
       AND (
         ci.title ILIKE ${`%${normalized}%`}
         OR ci.summary ILIKE ${`%${normalized}%`}
@@ -241,46 +349,72 @@ export async function searchContent(query: string) {
   return rows.map(mapContentRow);
 }
 
-export async function listAllTags() {
-  const items = await listAllContent();
+export async function listAllTags(workspaceSlug?: string | null) {
+  const items = await runContentQuery(undefined, workspaceSlug);
   return Array.from(new Set(items.flatMap((item) => item.tags))).sort();
 }
 
-export async function getCategoryName(categorySlug: string) {
+export async function getCategoryName(categorySlug: string, workspaceSlug?: string | null) {
   const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return categorySlug;
+  }
   const rows = await sql<{ name: string }[]>`
-    SELECT name FROM categories WHERE slug = ${categorySlug} LIMIT 1
+    SELECT name
+    FROM categories
+    WHERE slug = ${categorySlug}
+      AND workspace_id = (
+        SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+      )
+    LIMIT 1
   `;
   return rows[0]?.name ?? categorySlug;
 }
 
-async function getContentIdBySlug(slug: string) {
+async function getContentBySlugRecord(slug: string, workspaceSlug?: string | null) {
   const sql = getSql();
-  const rows = await sql<{ id: string }[]>`
-    SELECT id FROM content_items WHERE slug = ${slug} LIMIT 1
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return null;
+  }
+  const rows = await sql<{ id: string; workspace_id: string }[]>`
+    SELECT id, workspace_id
+    FROM content_items
+    WHERE slug = ${slug}
+      AND workspace_id = (
+        SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+      )
+    LIMIT 1
   `;
-  return rows[0]?.id ?? null;
+  return rows[0] ?? null;
 }
 
-export async function recordView(slug: string, fingerprint: string, isAdmin = false) {
+export async function recordView(
+  slug: string,
+  fingerprint: string,
+  isAdmin = false,
+  workspaceSlug?: string | null,
+) {
   const sql = getSql();
-  const contentItemId = await getContentIdBySlug(slug);
-  if (!contentItemId) {
+  const contentItem = await getContentBySlugRecord(slug, workspaceSlug);
+  if (!contentItem) {
     return 0;
   }
 
   if (!isAdmin && fingerprint) {
     await sql`
-      INSERT INTO view_events (content_item_id, fingerprint)
-      VALUES (${contentItemId}, ${fingerprint})
-      ON CONFLICT (content_item_id, fingerprint, bucket_date) DO NOTHING
+      INSERT INTO view_events (workspace_id, content_item_id, fingerprint)
+      VALUES (${contentItem.workspace_id}, ${contentItem.id}, ${fingerprint})
+      ON CONFLICT (workspace_id, content_item_id, fingerprint, bucket_date) DO NOTHING
     `;
 
     const inserted = await sql<{ count: number | string }[]>`
       SELECT COUNT(*)::int AS count
       FROM view_events
-      WHERE content_item_id = ${contentItemId}
+      WHERE content_item_id = ${contentItem.id}
         AND fingerprint = ${fingerprint}
+        AND workspace_id = ${contentItem.workspace_id}
         AND bucket_date = CURRENT_DATE
     `;
 
@@ -288,29 +422,30 @@ export async function recordView(slug: string, fingerprint: string, isAdmin = fa
       await sql`
         UPDATE content_items
         SET view_count = view_count + 1
-        WHERE id = ${contentItemId}
+        WHERE id = ${contentItem.id}
       `;
     }
   }
 
   const count = await sql<{ view_count: number }[]>`
-    SELECT view_count FROM content_items WHERE id = ${contentItemId} LIMIT 1
+    SELECT view_count FROM content_items WHERE id = ${contentItem.id} LIMIT 1
   `;
 
   return Number(count[0]?.view_count ?? 0);
 }
 
-export async function toggleLike(slug: string, fingerprint: string) {
+export async function toggleLike(slug: string, fingerprint: string, workspaceSlug?: string | null) {
   const sql = getSql();
-  const contentItemId = await getContentIdBySlug(slug);
-  if (!contentItemId || !fingerprint) {
+  const contentItem = await getContentBySlugRecord(slug, workspaceSlug);
+  if (!contentItem || !fingerprint) {
     return { likes: 0, liked: false };
   }
 
   const existing = await sql<{ id: string }[]>`
     SELECT id FROM likes
-    WHERE content_item_id = ${contentItemId}
+    WHERE content_item_id = ${contentItem.id}
       AND fingerprint = ${fingerprint}
+      AND workspace_id = ${contentItem.workspace_id}
     LIMIT 1
   `;
 
@@ -321,15 +456,16 @@ export async function toggleLike(slug: string, fingerprint: string) {
     `;
   } else {
     await sql`
-      INSERT INTO likes (content_item_id, fingerprint)
-      VALUES (${contentItemId}, ${fingerprint})
+      INSERT INTO likes (workspace_id, content_item_id, fingerprint)
+      VALUES (${contentItem.workspace_id}, ${contentItem.id}, ${fingerprint})
     `;
   }
 
   const count = await sql<{ count: number | string }[]>`
     SELECT COUNT(*)::int AS count
     FROM likes
-    WHERE content_item_id = ${contentItemId}
+    WHERE content_item_id = ${contentItem.id}
+      AND workspace_id = ${contentItem.workspace_id}
   `;
 
   return {
@@ -338,8 +474,12 @@ export async function toggleLike(slug: string, fingerprint: string) {
   };
 }
 
-export async function getApprovedComments(slug: string) {
+export async function getApprovedComments(slug: string, workspaceSlug?: string | null) {
   const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return [];
+  }
   const rows = await sql<{
     id: string;
     slug: string;
@@ -356,9 +496,12 @@ export async function getApprovedComments(slug: string) {
       cm.status,
       cm.created_at
     FROM comments cm
-    JOIN content_items ci ON ci.id = cm.content_item_id
-    JOIN comment_authors ca ON ca.id = cm.author_id
+    JOIN content_items ci ON ci.id = cm.content_item_id AND ci.workspace_id = cm.workspace_id
+    JOIN comment_authors ca ON ca.id = cm.author_id AND ca.workspace_id = cm.workspace_id
     WHERE ci.slug = ${slug}
+      AND ci.workspace_id = (
+        SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+      )
       AND cm.status = 'approved'
     ORDER BY cm.created_at DESC
   `;
@@ -383,29 +526,40 @@ export async function createComment(
   nickname: string,
   body: string,
   fingerprint: string,
+  workspaceSlug?: string | null,
 ) {
   const sql = getSql();
-  const contentItemId = await getContentIdBySlug(slug);
-  if (!contentItemId) {
+  const contentItem = await getContentBySlugRecord(slug, workspaceSlug);
+  if (!contentItem) {
     throw new Error("CONTENT_NOT_FOUND");
   }
 
   const authors = await sql<{ id: string }[]>`
-    INSERT INTO comment_authors (nickname, fingerprint)
-    VALUES (${nickname}, ${fingerprint})
-    ON CONFLICT (fingerprint)
+    INSERT INTO comment_authors (workspace_id, nickname, fingerprint)
+    VALUES (${contentItem.workspace_id}, ${nickname}, ${fingerprint})
+    ON CONFLICT (workspace_id, fingerprint)
     DO UPDATE SET nickname = EXCLUDED.nickname
     RETURNING id
   `;
 
   await sql`
-    INSERT INTO comments (content_item_id, author_id, body, status)
-    VALUES (${contentItemId}, ${authors[0].id}, ${body}, 'pending')
+    INSERT INTO comments (workspace_id, content_item_id, author_id, body, status)
+    VALUES (
+      ${contentItem.workspace_id},
+      ${contentItem.id},
+      ${authors[0].id},
+      ${body},
+      'pending'
+    )
   `;
 }
 
-export async function listPendingComments() {
+export async function listPendingComments(workspaceSlug?: string | null) {
   const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return [];
+  }
   const rows = await sql<{
     id: string;
     slug: string;
@@ -426,10 +580,13 @@ export async function listPendingComments() {
       rr.slug AS module,
       ci.title
     FROM comments cm
-    JOIN content_items ci ON ci.id = cm.content_item_id
-    JOIN repo_registry rr ON rr.id = ci.repo_id
-    JOIN comment_authors ca ON ca.id = cm.author_id
+    JOIN content_items ci ON ci.id = cm.content_item_id AND ci.workspace_id = cm.workspace_id
+    JOIN repo_registry rr ON rr.id = ci.repo_id AND rr.workspace_id = ci.workspace_id
+    JOIN comment_authors ca ON ca.id = cm.author_id AND ca.workspace_id = cm.workspace_id
     WHERE cm.status = 'pending'
+      AND cm.workspace_id = (
+        SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+      )
     ORDER BY cm.created_at DESC
   `;
 
@@ -450,34 +607,12 @@ export async function listPendingComments() {
   );
 }
 
-function parseSyncErrorDetail(errorDetail: string | null) {
-  if (!errorDetail) {
-    return {
-      errorCode: undefined,
-      errorMessage: undefined,
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(errorDetail) as {
-      code?: string;
-      message?: string;
-    };
-
-    return {
-      errorCode: parsed.code,
-      errorMessage: parsed.message ?? errorDetail,
-    };
-  } catch {
-    return {
-      errorCode: undefined,
-      errorMessage: errorDetail,
-    };
-  }
-}
-
-export async function listRecentSyncLogs(limit = 12) {
+export async function listRecentSyncLogs(limit = 12, workspaceSlug?: string | null) {
   const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return [];
+  }
   const rows = await sql<{
     id: string;
     module: ModuleSlug;
@@ -489,6 +624,11 @@ export async function listRecentSyncLogs(limit = 12) {
     files_removed: number | string | null;
     status: AdminSyncLogRecord["status"];
     error_detail: string | null;
+    failure_category: string | null;
+    recovery_action: string | null;
+    compensation_run_id: string | null;
+    is_retryable: boolean | null;
+    operator_summary: string | null;
     started_at: string | Date;
     finished_at: string | Date | null;
   }[]>`
@@ -503,16 +643,24 @@ export async function listRecentSyncLogs(limit = 12) {
       sl.files_removed,
       sl.status,
       sl.error_detail,
+      sl.failure_category,
+      sl.recovery_action,
+      sl.compensation_run_id,
+      sl.is_retryable,
+      sl.operator_summary,
       sl.started_at,
       sl.finished_at
     FROM sync_logs sl
-    JOIN repo_registry rr ON rr.id = sl.repo_id
+    JOIN repo_registry rr ON rr.id = sl.repo_id AND rr.workspace_id = sl.workspace_id
+    WHERE sl.workspace_id = (
+      SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+    )
     ORDER BY sl.started_at DESC
     LIMIT ${limit}
   `;
 
   return rows.map((row): AdminSyncLogRecord => {
-    const parsedError = parseSyncErrorDetail(row.error_detail);
+    const parsedError = parseStoredSyncErrorDetail(row.error_detail);
 
     return {
       id: row.id,
@@ -526,6 +674,14 @@ export async function listRecentSyncLogs(limit = 12) {
       status: row.status,
       errorCode: parsedError.errorCode,
       errorMessage: parsedError.errorMessage,
+      failureCategory: row.failure_category ?? parsedError.failureCategory,
+      recoveryAction: row.recovery_action ?? parsedError.recoveryAction,
+      compensationRunId: row.compensation_run_id ?? undefined,
+      isRetryable:
+        typeof row.is_retryable === "boolean"
+          ? row.is_retryable
+          : parsedError.isRetryable,
+      operatorSummary: row.operator_summary ?? parsedError.operatorSummary,
       startedAt:
         row.started_at instanceof Date
           ? row.started_at.toISOString()
@@ -541,8 +697,13 @@ export async function listRecentSyncLogs(limit = 12) {
 export async function reviewComment(
   id: string,
   decision: "approved" | "rejected",
+  workspaceSlug?: string | null,
 ) {
   const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return null;
+  }
   const rows = await sql<{
     id: string;
     slug: string;
@@ -557,9 +718,16 @@ export async function reviewComment(
     SET status = ${decision}
     FROM content_items ci, repo_registry rr, comment_authors ca
     WHERE cm.id = ${id}
+      AND cm.status = 'pending'
+      AND cm.workspace_id = (
+        SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+      )
       AND ci.id = cm.content_item_id
+      AND ci.workspace_id = cm.workspace_id
       AND rr.id = ci.repo_id
+      AND rr.workspace_id = ci.workspace_id
       AND ca.id = cm.author_id
+      AND ca.workspace_id = cm.workspace_id
     RETURNING
       cm.id,
       ci.slug,
@@ -589,6 +757,35 @@ export async function reviewComment(
   } satisfies AdminCommentRecord;
 }
 
-export function getModuleMeta(moduleSlug: string) {
-  return getModuleBySlug(moduleSlug);
+export async function getModuleMeta(moduleSlug: string, workspaceSlug?: string | null) {
+  const sql = getSql();
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  if (!targetWorkspaceSlug) {
+    return null;
+  }
+  const rows = await sql<{
+    slug: string;
+    name: string;
+    display_type: DisplayType;
+    meta: unknown;
+  }[]>`
+    SELECT rr.slug, rr.name, rr.display_type, rr.meta
+    FROM repo_registry rr
+    WHERE rr.slug = ${moduleSlug}
+      AND rr.workspace_id = (
+        SELECT id FROM workspaces WHERE slug = ${targetWorkspaceSlug} LIMIT 1
+      )
+    LIMIT 1
+  `;
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return buildModuleDefinition({
+    slug: rows[0].slug,
+    name: rows[0].name,
+    displayType: rows[0].display_type,
+    meta: rows[0].meta,
+  });
 }

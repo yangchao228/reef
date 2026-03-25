@@ -1,11 +1,21 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { listCategories } from "@/lib/content-repository";
+import {
+  buildWorkspaceDirectoryHref,
+  getRequestWorkspaceSlug,
+} from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
 export default async function CategoriesPage() {
-  const categories = await listCategories();
+  const workspaceSlug = getRequestWorkspaceSlug();
+  if (!workspaceSlug) {
+    redirect(buildWorkspaceDirectoryHref("/categories"));
+  }
+
+  const categories = await listCategories(workspaceSlug);
 
   return (
     <section className="px-5 py-10 sm:px-8 sm:py-12">

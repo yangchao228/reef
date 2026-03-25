@@ -30,7 +30,8 @@ jobs:
 
     env:
       DATABASE_URL: postgres://reef:reef@127.0.0.1:5432/reef
-      ADMIN_IP_ALLOWLIST: 127.0.0.1,::1
+      REEF_WORKSPACE_SLUG: reef-ci-space
+      REEF_ADMIN_GITHUB_LOGIN: reef-ci-admin
       GITHUB_WEBHOOK_SECRET: ci-webhook-secret
       NEXTAUTH_SECRET: ci-nextauth-secret
       NEXTAUTH_URL: http://127.0.0.1:3000
@@ -53,6 +54,15 @@ jobs:
 
       - name: Initialize Database Schema
         run: npm run db:init
+
+      - name: Ensure Workspace
+        run: npm run workspace:ensure -- --workspace "$REEF_WORKSPACE_SLUG" --name "Reef CI Workspace" --login "$REEF_ADMIN_GITHUB_LOGIN"
+
+      - name: Verify V2 Multitenant Schema
+        run: npm run db:verify:v2
+
+      - name: Run Unit Tests
+        run: npm run test:unit
 
       - name: Seed Human30 Fixture
         run: npm run import:markdown -- --module human30 --dir tests/fixtures/content/human30 --purge-missing

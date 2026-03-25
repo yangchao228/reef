@@ -9,6 +9,8 @@ export const moduleDefaults = {
   bookmarks: { name: "收藏夹", displayType: "bookmarks" },
 };
 
+export const supportedDisplayTypes = new Set(["blog", "timeline", "bookmarks"]);
+
 export function parseArgs(argv) {
   const args = {};
 
@@ -81,14 +83,59 @@ export function createSqlClient() {
   return postgres(databaseUrl, { prepare: false });
 }
 
+function normalizeWorkspaceSlug(value) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized;
+}
+
+export function getConfiguredWorkspaceSlug() {
+  return normalizeWorkspaceSlug(process.env.REEF_WORKSPACE_SLUG);
+}
+
+export function getTargetWorkspaceSlug() {
+  const workspaceSlug = getConfiguredWorkspaceSlug();
+  if (!workspaceSlug) {
+    throw new Error("REEF_WORKSPACE_SLUG_MISSING");
+  }
+
+  return workspaceSlug;
+}
+
+function resolveWorkspaceSlug(workspaceSlug) {
+  return workspaceSlug ?? getTargetWorkspaceSlug();
+}
+
+export async function getWorkspaceId(sql, workspaceSlug) {
+  const targetWorkspaceSlug = resolveWorkspaceSlug(workspaceSlug);
+  const rows = await sql`
+    SELECT id
+    FROM workspaces
+    WHERE slug = ${targetWorkspaceSlug}
+    LIMIT 1
+  `;
+
+  if (!rows[0]?.id) {
+    throw new Error(`WORKSPACE_NOT_FOUND:${targetWorkspaceSlug}`);
+  }
+
+  return rows[0].id;
+}
+
 export async function ensureRepoRecord(
   sql,
   moduleSlug,
   defaults,
   repoConfig,
+  workspaceSlug,
 ) {
+  const workspaceId = await getWorkspaceId(sql, workspaceSlug);
   const repoRows = await sql`
     INSERT INTO repo_registry (
+      workspace_id,
       slug,
       name,
       github_owner,
@@ -98,6 +145,7 @@ export async function ensureRepoRecord(
       meta
     )
     VALUES (
+      ${workspaceId},
       ${moduleSlug},
       ${defaults.name},
       ${repoConfig.githubOwner},
@@ -106,7 +154,7 @@ export async function ensureRepoRecord(
       string_to_array(${repoConfig.watchPaths.join("|||")}, '|||'),
       ${JSON.stringify(repoConfig.meta ?? {})}
     )
-    ON CONFLICT (slug)
+    ON CONFLICT (workspace_id, slug)
     DO UPDATE SET
       name = EXCLUDED.name,
       github_owner = EXCLUDED.github_owner,
@@ -117,10 +165,13 @@ export async function ensureRepoRecord(
     RETURNING id
   `;
 
-  return repoRows[0].id;
+  return {
+    repoId: repoRows[0].id,
+    workspaceId,
+  };
 }
 
-export async function upsertMarkdownEntries(sql, repoId, entries) {
+export async function upsertMarkdownEntries(sql, repoId, entries, workspaceId) {
   const importedPaths = [];
 
   for (const entry of entries) {
@@ -131,9 +182,9 @@ export async function upsertMarkdownEntries(sql, repoId, entries) {
       : new Date().toISOString();
 
     const categoryRows = await sql`
-      INSERT INTO categories (slug, name)
-      VALUES (${categorySlug}, ${normalizeCategoryName(categorySlug)})
-      ON CONFLICT (slug)
+      INSERT INTO categories (workspace_id, slug, name)
+      VALUES (${workspaceId}, ${categorySlug}, ${normalizeCategoryName(categorySlug)})
+      ON CONFLICT (workspace_id, slug)
       DO UPDATE SET name = EXCLUDED.name
       RETURNING id
     `;
@@ -144,6 +195,7 @@ export async function upsertMarkdownEntries(sql, repoId, entries) {
 
     await sql`
       INSERT INTO content_items (
+        workspace_id,
         repo_id,
         category_id,
         file_path,
@@ -161,6 +213,7 @@ export async function upsertMarkdownEntries(sql, repoId, entries) {
         status
       )
       VALUES (
+        ${workspaceId},
         ${repoId},
         ${categoryRows[0].id},
         ${entry.filePath},
@@ -181,6 +234,7 @@ export async function upsertMarkdownEntries(sql, repoId, entries) {
       )
       ON CONFLICT (repo_id, file_path)
       DO UPDATE SET
+        workspace_id = EXCLUDED.workspace_id,
         category_id = EXCLUDED.category_id,
         github_sha = EXCLUDED.github_sha,
         slug = EXCLUDED.slug,
