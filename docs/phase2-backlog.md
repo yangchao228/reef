@@ -1,8 +1,8 @@
 # Reef · Phase 2 执行 Backlog
 
 **文档状态：** 执行中  
-**更新日期：** 2026-03-25  
-**关联文档：** `docs/phased-roadmap.md`、`docs/development.md`、`docs/single-tenant-cleanup-checklist.md`
+**更新日期：** 2026-03-27  
+**关联文档：** `docs/phased-roadmap.md`、`docs/development.md`、`docs/single-tenant-cleanup-checklist.md`、`docs/ops-runbook.md`
 
 ---
 
@@ -49,14 +49,17 @@
 ### In Progress
 
 - `B01` 正式化补偿同步调度入口
-- `B02` 扩展 `sync_logs` 结构化 schema
-- `B03` 固化同步失败分类器
+- `B07` 收紧开发态同步 fallback 与 legacy 命名
 
 ### Recently Landed
 
+- `B02` 已补 `sync_logs` 结构化字段与展示映射
+- `B03` 已固化首批失败分类器
 - `B04` 后台已开始显示失败分类、恢复动作和 `compensationRunId`
 - `B05` 已补同步分类器与补偿批次归组的库级测试
-- `B06` smoke 已补关键补偿链路断言，待在 acceptance 环境继续跑整链路
+- `B06` smoke 已覆盖关键补偿链路，acceptance 环境已跑通
+- `B08` 已补同步运维 runbook
+- `B09` README / 开发文档 / 路线图已按当前实现更新
 
 ---
 
@@ -73,6 +76,11 @@
 - 宿主机 cron 作为备用方案
 - 不使用 GitHub Actions 承担生产补偿主链
 - 同一 `workspace` 在一个调度窗口内不会重复执行同一轮补偿
+
+当前状态：
+
+- 已有正式执行命令、并发锁、去重窗口与 runbook
+- 剩余工作是把调度入口挂到真实部署环境
 
 ### `B02` 扩展 `sync_logs` 结构化 schema
 
@@ -126,7 +134,15 @@
 目标：
 让接手人按文档即可完成一次基础诊断与恢复。
 
+当前状态：
+
+- 已完成，见 `docs/ops-runbook.md`
+
 ### `B09` 更新 Phase 2 路线图与状态文档
 
 目标：
 让 README、开发文档、路线图重新对齐当前真实实现。
+
+当前状态：
+
+- 已完成一轮更新；后续只需随主链小步同步

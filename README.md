@@ -77,6 +77,36 @@ REEF_WORKSPACE_SLUG=your-workspace-slug \
 - 如需调整去重窗口，可追加 `--dedupe-window-minutes <n>`
 - 每次执行仍会写入 `sync_logs`，并使用 `trigger_type = cron`
 
+当前推荐的生产调度约束：
+
+- 优先使用部署环境原生 scheduler
+- 宿主机 cron 作为备用方案
+- 不使用 GitHub Actions 承担生产补偿主链
+- 建议每个 `workspace` 每 15 分钟执行一次 `--only-failed`
+- 建议一条 scheduler / cron 任务只对应一个 `workspace`
+
+当前仓库也提供了一个 Docker / 宿主机两用的调度入口：
+
+```bash
+REEF_WORKSPACE_SLUG=your-workspace-slug ./deploy/reef-compensate.sh
+```
+
+这个脚本会直接执行：
+
+```bash
+docker compose run --rm compensator
+```
+
+也就是说，宿主机 scheduler 不需要自己拼长命令，只需要传入目标 `REEF_WORKSPACE_SLUG` 即可。
+
+宿主机 cron 备用示例：
+
+```cron
+*/15 * * * * cd /srv/reef && REEF_WORKSPACE_SLUG=your-workspace-slug ./deploy/reef-compensate.sh >> /var/log/reef-compensate.log 2>&1
+```
+
+更完整的排障顺序见 [docs/ops-runbook.md](/Users/yangchao/github/reef/docs/ops-runbook.md)。
+
 ## 导入 Markdown 到本地库
 
 先准备一个带 frontmatter 的 Markdown 目录，然后执行：
@@ -227,7 +257,7 @@ SMOKE_BASE_URL=http://127.0.0.1:3000 REEF_WORKSPACE_SLUG=reef-ci-space REEF_ADMI
 
 ## 下一步
 
-- 把补偿同步接到正式 scheduler，并补齐运行频率、告警和运维约束文档
+- 把补偿调度正式接到目标部署环境的 scheduler
 - 继续压缩 legacy header/cookie 过渡鉴权残留
-- 继续扩大 CI / smoke 对后台主链与同步链路的覆盖
+- 继续扩大 CI / smoke 对 installation / webhook / 授权异常的覆盖
 - 主流程稳定后，再推进 Agent Module

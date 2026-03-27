@@ -1,0 +1,14 @@
+[Unit]
+Description=Reef compensation sync for workspace %i
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/reef
+Environment=REEF_WORKSPACE_SLUG=%i
+EnvironmentFile=/srv/reef/.env
+ExecStart=/srv/reef/deploy/reef-compensate.sh
+
+[Install]
+WantedBy=multi-user.target

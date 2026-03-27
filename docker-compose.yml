@@ -9,7 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - reef-postgres-data:/var/lib/postgresql/data
-      - ./frontend/db/init/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./frontend/db/init/002_multitenant_v2.sql:/docker-entrypoint-initdb.d/002_multitenant_v2.sql:ro
     restart: unless-stopped
 
   frontend:
@@ -24,6 +24,21 @@ services:
     depends_on:
       - db
     restart: unless-stopped
+
+  compensator:
+    build:
+      context: ./frontend
+      target: ops
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: postgres://reef:reef@db:5432/reef
+    depends_on:
+      - db
+    profiles:
+      - ops
+    restart: "no"
+    command: ["npm", "run", "sync:compensate", "--", "--only-failed"]
 
 volumes:
   reef-postgres-data:

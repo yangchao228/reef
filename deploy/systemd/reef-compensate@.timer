@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Reef compensation sync every 15 minutes for workspace %i
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit=reef-compensate@%i.service
+
+[Install]
+WantedBy=timers.target
